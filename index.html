@@ -116,7 +116,12 @@
 
   <div class="card">
     <label>密钥 / 密码 <span id="str" class="strength"></span></label>
-    <input id="key" type="password" placeholder="双方约定的强密码" autocomplete="off" spellcheck="false">
+    <input id="key" type="text" placeholder="双方约定的强密码" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="card">
+    <label>迭代次数 <span id="iterLabel" class="strength" style="color:var(--sub);font-weight:400;">当前: 600000</span></label>
+    <input id="iter" type="number" value="600000" min="1000" step="1000" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
   </div>
 
   <div class="card">
@@ -147,7 +152,6 @@
 <script>
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-const ITER = 600000;
 
 const $ = id => document.getElementById(id);
 
@@ -160,11 +164,11 @@ function toast(msg, type){
   toastTimer = setTimeout(() => { t.className = 'toast ' + (type || ''); }, 2200);
 }
 
-async function deriveKey(password, salt){
+async function deriveKey(password, salt, iterations){
   const baseKey = await crypto.subtle.importKey(
     'raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name:'PBKDF2', salt, iterations:ITER, hash:'SHA-256' },
+    { name:'PBKDF2', salt, iterations: iterations, hash:'SHA-256' },
     baseKey,
     { name:'AES-GCM', length:256 },
     false,
@@ -188,15 +192,35 @@ function b64ToBuf(b64){
   return b;
 }
 
+function getIterations(){
+  const raw = $('iter').value.trim();
+  const n = parseInt(raw, 10);
+  if(isNaN(n) || n < 1000) {
+    return 600000;
+  }
+  return n;
+}
+
+$('iter').addEventListener('input', function(){
+  const raw = this.value.trim();
+  const n = parseInt(raw, 10);
+  if(!isNaN(n) && n >= 1000) {
+    $('iterLabel').textContent = '当前: ' + n;
+  } else {
+    $('iterLabel').textContent = '当前: 无效';
+  }
+});
+
 async function encrypt(){
   const pw = $('key').value;
   const pt = $('data').value;
   if(!pw) return toast('请输入密钥', 'bad');
   if(!pt) return toast('请输入要加密的内容', 'bad');
+  const iter = getIterations();
   try{
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv   = crypto.getRandomValues(new Uint8Array(12));
-    const key  = await deriveKey(pw, salt);
+    const key  = await deriveKey(pw, salt, iter);
     const ct   = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, enc.encode(pt));
 
     const out = new Uint8Array(16 + 12 + ct.byteLength);
@@ -216,13 +240,14 @@ async function decrypt(){
   const b64 = $('data').value.trim();
   if(!pw) return toast('请输入密钥', 'bad');
   if(!b64) return toast('请输入密文', 'bad');
+  const iter = getIterations();
   try{
     const raw = b64ToBuf(b64);
     if(raw.length < 29) throw new Error('密文长度不足');
     const salt = raw.slice(0, 16);
     const iv   = raw.slice(16, 28);
     const ct   = raw.slice(28);
-    const key  = await deriveKey(pw, salt);
+    const key  = await deriveKey(pw, salt, iter);
     const pt   = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
     $('out').value = dec.decode(pt);
     toast('解密成功', 'ok');
